@@ -1,0 +1,40 @@
+{
+  "name": "pi-reasoning-by-thinking",
+  "version": "0.1.0",
+  "description": "Map Pi thinking levels to provider request reasoning parameters",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/erathaowl/pi-reasoning-by-thinking.git"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "reasoning",
+    "thinking"
+  ],
+  "files": [
+    "extensions",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test tests/config.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}

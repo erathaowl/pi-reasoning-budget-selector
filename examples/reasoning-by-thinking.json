@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "provider": "llama-local",
+      "model": "qwen3.8-27b",
+      "parameter": "thinking_budget_tokens",
+      "effort": {
+        "low": 4096,
+        "medium": 8192,
+        "xhigh": 12288
+      }
+    }
+  ]
+}
