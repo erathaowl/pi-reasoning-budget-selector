@@ -18,7 +18,7 @@ test("parseConfig applies the default payload parameter", () => {
       {
         provider: "llama-local",
         model: "qwen3.8-27b",
-        effort: { low: 4096, medium: 8192, xhigh: 12288 },
+        budgets: { low: 4096, medium: 8192, xhigh: 12288 },
       },
     ],
   });
@@ -29,46 +29,102 @@ test("parseConfig applies the default payload parameter", () => {
         provider: "llama-local",
         model: "qwen3.8-27b",
         parameter: DEFAULT_PARAMETER,
-        effort: { low: 4096, medium: 8192, xhigh: 12288 },
+        budgets: { low: 4096, medium: 8192, xhigh: 12288 },
       },
     ],
   });
 });
 
-test("parseConfig rejects unknown levels, unsafe parameters, and duplicate rules", () => {
+test("parseConfig trims provider, model, and parameter", () => {
+  const config = parseConfig({
+    rules: [
+      {
+        provider: " llama-local ",
+        model: " qwen3.8-27b ",
+        parameter: " reasoning_budget_tokens ",
+        budgets: { low: 4096 },
+      },
+    ],
+  });
+
+  assert.deepEqual(config.rules[0], {
+    provider: "llama-local",
+    model: "qwen3.8-27b",
+    parameter: "reasoning_budget_tokens",
+    budgets: { low: 4096 },
+  });
+});
+
+test("parseConfig rejects unknown thinking levels", () => {
   assert.throws(
     () =>
       parseConfig({
-        rules: [{ provider: "p", model: "m", effort: { enormous: 1 } }],
+        rules: [{ provider: "p", model: "m", budgets: { enormous: 1 } }],
       }),
     /unsupported thinking level/,
   );
+});
 
+test("parseConfig rejects off in budgets", () => {
   assert.throws(
     () =>
       parseConfig({
-        rules: [
-          {
-            provider: "p",
-            model: "m",
-            parameter: "__proto__",
-            effort: { low: 1 },
-          },
-        ],
+        rules: [{ provider: "p", model: "m", budgets: { off: 0 } }],
       }),
-    /parameter is not allowed/,
+    /budgets\.off is not supported/,
   );
+});
 
+test("parseConfig rejects unsafe parameters", () => {
+  for (const parameter of ["__proto__", "constructor", "prototype"]) {
+    assert.throws(
+      () =>
+        parseConfig({
+          rules: [{ provider: "p", model: "m", parameter, budgets: { low: 1 } }],
+        }),
+      /parameter is not allowed/,
+    );
+  }
+});
+
+test("parseConfig rejects duplicate provider, model, and parameter rules", () => {
   assert.throws(
     () =>
       parseConfig({
         rules: [
-          { provider: "p", model: "m", effort: { low: 1 } },
-          { provider: "p", model: "m", effort: { high: 2 } },
+          { provider: "p", model: "m", budgets: { low: 1 } },
+          {
+            provider: " p ",
+            model: " m ",
+            parameter: ` ${DEFAULT_PARAMETER} `,
+            budgets: { high: 2 },
+          },
         ],
       }),
     /duplicates/,
   );
+});
+
+test("parseConfig accepts only finite numeric budgets", () => {
+  const invalidBudgets: unknown[] = [
+    "4096",
+    null,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    {},
+    [],
+  ];
+
+  for (const budget of invalidBudgets) {
+    assert.throws(
+      () =>
+        parseConfig({
+          rules: [{ provider: "p", model: "m", budgets: { low: budget } }],
+        }),
+      /budgets\.low must be a finite number/,
+    );
+  }
 });
 
 test("applyReasoningRules only updates exact provider and model matches", () => {
@@ -76,49 +132,75 @@ test("applyReasoningRules only updates exact provider and model matches", () => 
     {
       provider: "llama-local",
       model: "qwen3.8-27b",
-      parameter: "thinking_budget_tokens",
-      effort: { low: 4096 },
+      parameter: DEFAULT_PARAMETER,
+      budgets: { low: 4096 },
     },
   ];
   const matchingPayload: Record<string, unknown> = { temperature: 0 };
-  const otherPayload: Record<string, unknown> = { temperature: 0 };
+  const otherProviderPayload: Record<string, unknown> = { temperature: 0 };
+  const otherModelPayload: Record<string, unknown> = { temperature: 0 };
 
   applyReasoningRules(matchingPayload, rules, "llama-local", "qwen3.8-27b", "low");
-  applyReasoningRules(otherPayload, rules, "llama-local", "another-model", "low");
+  applyReasoningRules(otherProviderPayload, rules, "Llama-local", "qwen3.8-27b", "low");
+  applyReasoningRules(otherModelPayload, rules, "llama-local", "Qwen3.8-27b", "low");
 
   assert.deepEqual(matchingPayload, { temperature: 0, thinking_budget_tokens: 4096 });
-  assert.deepEqual(otherPayload, { temperature: 0 });
+  assert.deepEqual(otherProviderPayload, { temperature: 0 });
+  assert.deepEqual(otherModelPayload, { temperature: 0 });
 });
 
-test("off and null remove a payload parameter", () => {
-  const rule: ReasoningRule = {
-    provider: "p",
-    model: "m",
-    parameter: "reasoning_effort",
-    effort: { low: "low", high: null },
+test("off removes the configured budget parameter", () => {
+  const payload: Record<string, unknown> = {
+    temperature: 0,
+    reasoning_budget_tokens: 8192,
   };
-  const offPayload: Record<string, unknown> = { reasoning_effort: "high" };
-  const nullPayload: Record<string, unknown> = { reasoning_effort: "low" };
-
-  applyReasoningRules(offPayload, [rule], "p", "m", "off");
-  applyReasoningRules(nullPayload, [rule], "p", "m", "high");
-
-  assert.equal(Object.hasOwn(offPayload, "reasoning_effort"), false);
-  assert.equal(Object.hasOwn(nullPayload, "reasoning_effort"), false);
-});
-
-test("an explicit off value is sent instead of deleting the parameter", () => {
-  const payload: Record<string, unknown> = { reasoning_effort: "high" };
   const rule: ReasoningRule = {
     provider: "p",
     model: "m",
-    parameter: "reasoning_effort",
-    effort: { off: "none" },
+    parameter: "reasoning_budget_tokens",
+    budgets: { low: 4096 },
   };
 
   applyReasoningRules(payload, [rule], "p", "m", "off");
 
-  assert.equal(payload.reasoning_effort, "none");
+  assert.deepEqual(payload, { temperature: 0 });
+});
+
+test("an unmapped non-off level leaves the payload unchanged", () => {
+  const payload: Record<string, unknown> = { thinking_budget_tokens: 1234 };
+  const rule: ReasoningRule = {
+    provider: "provider",
+    model: "model",
+    parameter: DEFAULT_PARAMETER,
+    budgets: { low: 4096 },
+  };
+
+  applyReasoningRules(payload, [rule], "provider", "model", "medium");
+
+  assert.equal(payload.thinking_budget_tokens, 1234);
+});
+
+test("applying a budget does not alter Pi-managed thinking controls", () => {
+  const payload: Record<string, unknown> = {
+    reasoning_effort: "low",
+    enable_thinking: true,
+    chat_template_kwargs: { preserve_thinking: true },
+  };
+  const rule: ReasoningRule = {
+    provider: "p",
+    model: "m",
+    parameter: DEFAULT_PARAMETER,
+    budgets: { low: 4096 },
+  };
+
+  applyReasoningRules(payload, [rule], "p", "m", "low");
+
+  assert.deepEqual(payload, {
+    reasoning_effort: "low",
+    enable_thinking: true,
+    chat_template_kwargs: { preserve_thinking: true },
+    thinking_budget_tokens: 4096,
+  });
 });
 
 test("project configuration replaces global configuration", async () => {
@@ -129,7 +211,7 @@ test("project configuration replaces global configuration", async () => {
   try {
     await writeFile(
       globalPath,
-      JSON.stringify({ rules: [{ provider: "global", model: "m", effort: { low: 1 } }] }),
+      JSON.stringify({ rules: [{ provider: "global", model: "m", budgets: { low: 1 } }] }),
     );
 
     const globalConfig = await loadEffectiveConfig(globalPath, projectPath);
@@ -137,7 +219,7 @@ test("project configuration replaces global configuration", async () => {
 
     await writeFile(
       projectPath,
-      JSON.stringify({ rules: [{ provider: "project", model: "m", effort: { low: 2 } }] }),
+      JSON.stringify({ rules: [{ provider: "project", model: "m", budgets: { low: 2 } }] }),
     );
 
     const projectConfig = await loadEffectiveConfig(globalPath, projectPath);

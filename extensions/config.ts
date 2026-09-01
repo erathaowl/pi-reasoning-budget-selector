@@ -14,13 +14,12 @@ export const THINKING_LEVELS = [
 ] as const;
 
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-export type EffortValue = string | number | null;
 
 export interface ReasoningRule {
   provider: string;
   model: string;
   parameter: string;
-  effort: Partial<Record<ThinkingLevel, EffortValue>>;
+  budgets: Partial<Record<ThinkingLevel, number>>;
 }
 
 export interface ReasoningConfig {
@@ -47,41 +46,51 @@ function assertKnownKeys(
 }
 
 function parseNonEmptyString(value: unknown, location: string): string {
-  if (typeof value !== "string" || value.trim() === "") {
+  if (typeof value !== "string") {
     throw new Error(`${location} must be a non-empty string`);
   }
 
-  return value;
+  const trimmed = value.trim();
+
+  if (trimmed === "") {
+    throw new Error(`${location} must be a non-empty string`);
+  }
+
+  return trimmed;
 }
 
-function parseEffort(value: unknown, location: string): ReasoningRule["effort"] {
+function isThinkingLevel(value: string): value is ThinkingLevel {
+  return THINKING_LEVEL_SET.has(value);
+}
+
+function parseBudgets(value: unknown, location: string): ReasoningRule["budgets"] {
   if (!isRecord(value)) {
     throw new Error(`${location} must be an object`);
   }
 
-  const effort: ReasoningRule["effort"] = {};
+  const budgets: ReasoningRule["budgets"] = {};
 
-  for (const [level, mappedValue] of Object.entries(value)) {
-    if (!THINKING_LEVEL_SET.has(level)) {
+  for (const [level, budget] of Object.entries(value)) {
+    if (!isThinkingLevel(level)) {
       throw new Error(`${location} contains unsupported thinking level ${JSON.stringify(level)}`);
     }
 
-    if (
-      mappedValue !== null &&
-      typeof mappedValue !== "string" &&
-      (typeof mappedValue !== "number" || !Number.isFinite(mappedValue))
-    ) {
-      throw new Error(`${location}.${level} must be a finite number, string, or null`);
+    if (level === "off") {
+      throw new Error(`${location}.off is not supported`);
     }
 
-    effort[level as ThinkingLevel] = mappedValue;
+    if (typeof budget !== "number" || !Number.isFinite(budget)) {
+      throw new Error(`${location}.${level} must be a finite number`);
+    }
+
+    budgets[level] = budget;
   }
 
-  if (Object.keys(effort).length === 0) {
+  if (Object.keys(budgets).length === 0) {
     throw new Error(`${location} must define at least one thinking level`);
   }
 
-  return effort;
+  return budgets;
 }
 
 export function parseConfig(value: unknown): ReasoningConfig {
@@ -105,7 +114,7 @@ export function parseConfig(value: unknown): ReasoningConfig {
 
     assertKnownKeys(
       ruleValue,
-      new Set(["provider", "model", "parameter", "effort"]),
+      new Set(["provider", "model", "parameter", "budgets"]),
       location,
     );
 
@@ -130,7 +139,7 @@ export function parseConfig(value: unknown): ReasoningConfig {
       provider,
       model,
       parameter,
-      effort: parseEffort(ruleValue.effort, `${location}.effort`),
+      budgets: parseBudgets(ruleValue.budgets, `${location}.budgets`),
     };
   });
 
@@ -191,15 +200,10 @@ export function applyReasoningRules(
       continue;
     }
 
-    if (Object.hasOwn(rule.effort, level)) {
-      const value = rule.effort[level];
-      if (value === null) {
-        delete payload[rule.parameter];
-      } else {
-        payload[rule.parameter] = value;
-      }
-    } else if (level === "off") {
+    if (level === "off") {
       delete payload[rule.parameter];
+    } else if (Object.hasOwn(rule.budgets, level)) {
+      payload[rule.parameter] = rule.budgets[level];
     }
   }
 }

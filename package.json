@@ -1,7 +1,7 @@
 {
   "name": "pi-reasoning-by-thinking",
   "version": "0.1.0",
-  "description": "Map Pi thinking levels to provider request reasoning parameters",
+  "description": "Map Pi thinking levels to per-model numeric reasoning budgets",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -30,7 +30,7 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=0.84.4"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.4",

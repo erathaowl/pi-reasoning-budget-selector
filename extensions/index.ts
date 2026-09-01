@@ -9,7 +9,6 @@ import {
   CONFIG_FILE_NAME,
   loadEffectiveConfig,
   type ReasoningRule,
-  type ThinkingLevel,
 } from "./config.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,7 +35,7 @@ export default function reasoningByThinking(pi: ExtensionAPI): void {
   });
 
   pi.on("before_provider_request", (event, ctx) => {
-    if (!ctx.model || !isRecord(event.payload)) {
+    if (!ctx.model || !ctx.thinkingLevel || !isRecord(event.payload)) {
       return;
     }
 
@@ -45,7 +44,7 @@ export default function reasoningByThinking(pi: ExtensionAPI): void {
       rules,
       ctx.model.provider,
       ctx.model.id,
-      ctx.thinkingLevel as ThinkingLevel,
+      ctx.thinkingLevel,
     );
   });
 }
