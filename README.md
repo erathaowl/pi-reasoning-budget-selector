@@ -21,7 +21,7 @@ Create `reasoning-by-thinking.json` in one of Pi's configuration directories:
 | `~/.pi/agent/reasoning-by-thinking.json` | Global |
 | `.pi/reasoning-by-thinking.json` | Current project |
 
-`PI_CODING_AGENT_DIR` is respected for the global directory. Pi reads project configuration only for trusted projects. When both files exist, the project file completely replaces the global file; configurations are not merged.
+`PI_CODING_AGENT_DIR` is respected for the global directory. The extension reads project configuration only for trusted projects. When both files exist, the project file completely replaces the global file; configurations are not merged.
 
 Example:
 
@@ -76,11 +76,45 @@ Each entry in `rules` has:
 - `provider`: exact, case-sensitive Pi provider ID.
 - `model`: exact, case-sensitive Pi model ID.
 - `parameter`: optional top-level numeric request field; defaults to `thinking_budget_tokens`.
-- `budgets`: mapping from Pi thinking levels to finite numbers.
+- `budgets`: mapping from Pi thinking levels to positive safe integers.
 
 Known Pi levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Do not put `off` in `budgets`: when thinking is off, the extension always removes the configured parameter. An unconfigured non-off level leaves the payload unchanged.
 
-Provider, model, and parameter values are trimmed. Empty values, unknown properties or levels, unsafe parameter names, non-numeric budgets, and duplicate provider/model/parameter combinations are rejected. Invalid configuration disables rules for the current session and displays an error when UI is available.
+Provider, model, and parameter values are trimmed. Empty values, unknown properties or levels, unsafe parameter names, budgets that are not positive safe integers, and duplicate provider/model/parameter combinations are rejected. Invalid configuration disables rules for the current session and displays an error when UI is available.
+
+## Runtime budget safety
+
+Before assigning a configured budget, the extension reads `contextWindow` and `maxTokens` from Pi's active model metadata and requires:
+
+```text
+budget < maxTokens < contextWindow
+```
+
+All three values must be positive safe integers. An invalid relationship displays an error when UI is available, aborts the current agent operation, and does not inject the budget. Warnings described below do not block requests.
+
+The extension warns when either margin is below 4096 tokens:
+
+```text
+output headroom  = maxTokens - budget
+context headroom = contextWindow - maxTokens
+```
+
+Output headroom is the output capacity remaining after the maximum reasoning allowance. Context headroom is the theoretical context space not reserved by the model's maximum output. Warnings are deduplicated within the current session.
+
+For the example configuration above, model metadata of:
+
+```text
+contextWindow = 65536
+maxTokens     = 32768
+
+low    = 4096
+medium = 8192
+xhigh  = 12288
+```
+
+provides comfortable output and context margins and produces no warnings.
+
+Only a configured budget for the active non-off thinking level is validated and assigned. An unconfigured level remains untouched, and `off` only removes the rule's parameter.
 
 ## Pi thinking configuration
 

@@ -21,7 +21,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test tests/config.test.ts",
+    "test": "node --test tests/*.test.ts",
     "check": "tsc --noEmit"
   },
   "pi": {
@@ -30,7 +30,7 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.84.4"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.4",

@@ -14,12 +14,26 @@ export const THINKING_LEVELS = [
 ] as const;
 
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export type BudgetThinkingLevel = Exclude<ThinkingLevel, "off">;
 
 export interface ReasoningRule {
   provider: string;
   model: string;
   parameter: string;
-  budgets: Partial<Record<ThinkingLevel, number>>;
+  budgets: Partial<Record<BudgetThinkingLevel, number>>;
+}
+
+export const MIN_OUTPUT_HEADROOM_TOKENS = 4096;
+export const MIN_CONTEXT_HEADROOM_TOKENS = 4096;
+
+export interface BudgetWarning {
+  type: "output-headroom" | "context-headroom";
+  headroom: number;
+}
+
+export interface BudgetValidation {
+  error?: string;
+  warnings: BudgetWarning[];
 }
 
 export interface ReasoningConfig {
@@ -79,8 +93,12 @@ function parseBudgets(value: unknown, location: string): ReasoningRule["budgets"
       throw new Error(`${location}.off is not supported`);
     }
 
-    if (typeof budget !== "number" || !Number.isFinite(budget)) {
-      throw new Error(`${location}.${level} must be a finite number`);
+    if (
+      typeof budget !== "number" ||
+      !Number.isSafeInteger(budget) ||
+      budget <= 0
+    ) {
+      throw new Error(`${location}.${level} must be a positive safe integer`);
     }
 
     budgets[level] = budget;
@@ -186,6 +204,45 @@ export async function loadEffectiveConfig(
   }
 
   return (await readConfigFile(globalPath)) ?? { rules: [] };
+}
+
+export function validateBudgetForModel(
+  budget: number,
+  contextWindow: number,
+  maxTokens: number,
+): BudgetValidation {
+  const warnings: BudgetWarning[] = [];
+
+  if (!Number.isSafeInteger(budget) || budget <= 0) {
+    return { error: "reasoning budget must be a positive safe integer", warnings };
+  }
+  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
+    return { error: "contextWindow must be a positive safe integer", warnings };
+  }
+  if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) {
+    return { error: "maxTokens must be a positive safe integer", warnings };
+  }
+  if (budget >= contextWindow) {
+    return { error: "reasoning budget must be lower than contextWindow", warnings };
+  }
+  if (maxTokens >= contextWindow) {
+    return { error: "maxTokens must be lower than contextWindow", warnings };
+  }
+  if (budget >= maxTokens) {
+    return { error: "reasoning budget must be lower than maxTokens", warnings };
+  }
+
+  const outputHeadroom = maxTokens - budget;
+  if (outputHeadroom < MIN_OUTPUT_HEADROOM_TOKENS) {
+    warnings.push({ type: "output-headroom", headroom: outputHeadroom });
+  }
+
+  const contextHeadroom = contextWindow - maxTokens;
+  if (contextHeadroom < MIN_CONTEXT_HEADROOM_TOKENS) {
+    warnings.push({ type: "context-headroom", headroom: contextHeadroom });
+  }
+
+  return { warnings };
 }
 
 export function applyReasoningRules(

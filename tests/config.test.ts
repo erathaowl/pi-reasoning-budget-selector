@@ -7,9 +7,12 @@ import {
   applyReasoningRules,
   DEFAULT_PARAMETER,
   loadEffectiveConfig,
+  MIN_CONTEXT_HEADROOM_TOKENS,
+  MIN_OUTPUT_HEADROOM_TOKENS,
   parseConfig,
   readConfigFile,
   type ReasoningRule,
+  validateBudgetForModel,
 } from "../extensions/config.ts";
 
 test("parseConfig applies the default payload parameter", () => {
@@ -105,13 +108,17 @@ test("parseConfig rejects duplicate provider, model, and parameter rules", () =>
   );
 });
 
-test("parseConfig accepts only finite numeric budgets", () => {
+test("parseConfig accepts only positive safe-integer budgets", () => {
   const invalidBudgets: unknown[] = [
-    "4096",
-    null,
+    -1,
+    0,
+    1.5,
     Number.NaN,
     Number.POSITIVE_INFINITY,
     Number.NEGATIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+    "4096",
+    null,
     {},
     [],
   ];
@@ -122,8 +129,84 @@ test("parseConfig accepts only finite numeric budgets", () => {
         parseConfig({
           rules: [{ provider: "p", model: "m", budgets: { low: budget } }],
         }),
-      /budgets\.low must be a finite number/,
+      /budgets\.low must be a positive safe integer/,
     );
+  }
+});
+
+function assertValidWithoutWarnings(
+  budget: number,
+  contextWindow: number,
+  maxTokens: number,
+): void {
+  assert.deepEqual(validateBudgetForModel(budget, contextWindow, maxTokens), {
+    warnings: [],
+  });
+}
+
+test("validateBudgetForModel accepts a budget with comfortable margins", () => {
+  assertValidWithoutWarnings(12288, 65536, 32768);
+});
+
+test("validateBudgetForModel rejects budgets at or above model limits", () => {
+  assert.match(validateBudgetForModel(8192, 65536, 8192).error ?? "", /maxTokens/);
+  assert.match(validateBudgetForModel(10000, 65536, 8192).error ?? "", /maxTokens/);
+  assert.match(validateBudgetForModel(32768, 32768, 16384).error ?? "", /contextWindow/);
+});
+
+test("validateBudgetForModel rejects inconsistent model limits", () => {
+  assert.match(validateBudgetForModel(4096, 32768, 32768).error ?? "", /maxTokens/);
+  assert.match(validateBudgetForModel(4096, 32768, 65536).error ?? "", /maxTokens/);
+});
+
+test("validateBudgetForModel rejects invalid model metadata", () => {
+  const invalidLimits = [
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ];
+
+  for (const invalidLimit of invalidLimits) {
+    assert.match(
+      validateBudgetForModel(1, invalidLimit, 2).error ?? "",
+      /contextWindow/,
+    );
+    assert.match(
+      validateBudgetForModel(1, 10000, invalidLimit).error ?? "",
+      /maxTokens/,
+    );
+  }
+});
+
+test("validateBudgetForModel warns only below the output headroom threshold", () => {
+  const warning = validateBudgetForModel(14000, 65536, 16384);
+  assert.equal(warning.error, undefined);
+  assert.deepEqual(warning.warnings, [
+    { type: "output-headroom", headroom: 2384 },
+  ]);
+
+  assertValidWithoutWarnings(
+    16384 - MIN_OUTPUT_HEADROOM_TOKENS,
+    65536,
+    16384,
+  );
+});
+
+test("validateBudgetForModel warns below the context headroom threshold", () => {
+  const validation = validateBudgetForModel(4096, 32768, 30000);
+  assert.equal(validation.error, undefined);
+  assert.deepEqual(validation.warnings, [
+    { type: "context-headroom", headroom: 2768 },
+  ]);
+
+  assertValidWithoutWarnings(4096, 32768, 32768 - MIN_CONTEXT_HEADROOM_TOKENS);
+});
+
+test("the intended Qwen budgets pass model validation silently", () => {
+  for (const budget of [4096, 8192, 12288]) {
+    assertValidWithoutWarnings(budget, 65536, 32768);
   }
 });
 
