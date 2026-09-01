@@ -1,4 +1,4 @@
-# pi-reasoning-by-thinking
+# pi-reasoning-budget-selector
 
 A small [Pi](https://pi.dev) extension that maps Pi's current thinking level to a **numeric reasoning budget** for an exact provider/model pair. It adds one configurable top-level field to the provider request payload.
 
