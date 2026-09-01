@@ -14,12 +14,12 @@ Review third-party Pi extensions before installing them: extensions run with you
 
 ## Configure
 
-Create `reasoning-by-thinking.json` in one of Pi's configuration directories:
+Create `reasoning-budget-selector.json` in one of Pi's configuration directories:
 
 | Path | Scope |
 | --- | --- |
-| `~/.pi/agent/reasoning-by-thinking.json` | Global |
-| `.pi/reasoning-by-thinking.json` | Current project |
+| `~/.pi/agent/reasoning-budget-selector.json` | Global |
+| `.pi/reasoning-budget-selector.json` | Current project |
 
 `PI_CODING_AGENT_DIR` is respected for the global directory. The extension reads project configuration only for trusted projects. When both files exist, the project file completely replaces the global file; configurations are not merged.
 

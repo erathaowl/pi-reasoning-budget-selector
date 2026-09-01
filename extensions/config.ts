@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-export const CONFIG_FILE_NAME = "reasoning-by-thinking.json";
+export const CONFIG_FILE_NAME = "reasoning-budget-selector.json";
 export const DEFAULT_PARAMETER = "thinking_budget_tokens";
 
 export const THINKING_LEVELS = [
