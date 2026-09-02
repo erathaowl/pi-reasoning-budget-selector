@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
   applyReasoningRules,
   DEFAULT_PARAMETER,
+  DEFAULT_REASONING_BUDGET_MESSAGE,
+  getReasoningBudgetMessage,
+  getReasoningBudgetMode,
   loadEffectiveConfig,
   MIN_CONTEXT_HEADROOM_TOKENS,
   MIN_OUTPUT_HEADROOM_TOKENS,
   parseConfig,
   readConfigFile,
+  resolveEffectiveConfigSource,
+  resolveReasoningBudget,
   type ReasoningRule,
+  updateReasoningRule,
   validateBudgetForModel,
 } from "../extensions/config.ts";
 
@@ -227,7 +233,11 @@ test("applyReasoningRules only updates exact provider and model matches", () => 
   applyReasoningRules(otherProviderPayload, rules, "Llama-local", "qwen3.8-27b", "low");
   applyReasoningRules(otherModelPayload, rules, "llama-local", "Qwen3.8-27b", "low");
 
-  assert.deepEqual(matchingPayload, { temperature: 0, thinking_budget_tokens: 4096 });
+  assert.deepEqual(matchingPayload, {
+    temperature: 0,
+    thinking_budget_tokens: 4096,
+    reasoning_budget_message: "...Wait, I'm overthinking this. Let's answer now.",
+  });
   assert.deepEqual(otherProviderPayload, { temperature: 0 });
   assert.deepEqual(otherModelPayload, { temperature: 0 });
 });
@@ -283,6 +293,7 @@ test("applying a budget does not alter Pi-managed thinking controls", () => {
     enable_thinking: true,
     chat_template_kwargs: { preserve_thinking: true },
     thinking_budget_tokens: 4096,
+    reasoning_budget_message: "...Wait, I'm overthinking this. Let's answer now.",
   });
 });
 
@@ -320,6 +331,200 @@ test("readConfigFile reports the source of invalid JSON", async () => {
   try {
     await writeFile(path, "{");
     await assert.rejects(readConfigFile(path), new RegExp(`invalid JSON in .*invalid\\.json`));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy rules use auto mode and the default message", () => {
+  const rule = parseConfig({
+    rules: [{ provider: "p", model: "m", budgets: { medium: 8192 } }],
+  }).rules[0] as ReasoningRule;
+
+  assert.equal(getReasoningBudgetMode(rule), "auto");
+  assert.equal(getReasoningBudgetMessage(rule), DEFAULT_REASONING_BUDGET_MESSAGE);
+  assert.equal(resolveReasoningBudget(rule, "medium"), 8192);
+});
+
+test("parseConfig accepts every explicit budget mode", () => {
+  for (const value of [
+    { budgetMode: "off" },
+    { budgetMode: "auto" },
+    { budgetMode: "custom", customBudget: 10000 },
+  ]) {
+    const rule = parseConfig({
+      rules: [{ provider: "p", model: "m", budgets: {}, ...value }],
+    }).rules[0];
+    assert.equal(rule?.budgetMode, value.budgetMode);
+  }
+});
+
+test("parseConfig rejects invalid modes and custom budgets", () => {
+  assert.throws(
+    () => parseConfig({ rules: [{ provider: "p", model: "m", budgets: {}, budgetMode: "manual" }] }),
+    /budgetMode/,
+  );
+  assert.throws(
+    () => parseConfig({ rules: [{ provider: "p", model: "m", budgets: {}, budgetMode: "custom" }] }),
+    /customBudget is required/,
+  );
+  for (const customBudget of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "10"]) {
+    assert.throws(
+      () => parseConfig({ rules: [{ provider: "p", model: "m", budgets: {}, customBudget }] }),
+      /customBudget must be a positive safe integer/,
+    );
+  }
+});
+
+test("parseConfig preserves non-empty reasoning messages exactly", () => {
+  const message = "  Stop thinking now.  \n";
+  const rule = parseConfig({
+    rules: [{ provider: "p", model: "m", budgets: {}, reasoningBudgetMessage: message }],
+  }).rules[0];
+  assert.equal(rule?.reasoningBudgetMessage, message);
+
+  for (const invalidMessage of ["", "  \n\t", 42]) {
+    assert.throws(
+      () => parseConfig({
+        rules: [{ provider: "p", model: "m", budgets: {}, reasoningBudgetMessage: invalidMessage }],
+      }),
+      /reasoningBudgetMessage must be a non-empty string/,
+    );
+  }
+});
+
+test("custom and off payload modes have explicit runtime semantics", () => {
+  const customRule: ReasoningRule = {
+    provider: "p",
+    model: "m",
+    parameter: "budget",
+    budgets: { low: 1, high: 2 },
+    budgetMode: "custom",
+    customBudget: 9000,
+    reasoningBudgetMessage: "Answer now.",
+  };
+  for (const level of ["minimal", "low", "max"] as const) {
+    const payload: Record<string, unknown> = { reasoning_effort: level };
+    applyReasoningRules(payload, [customRule], "p", "m", level);
+    assert.deepEqual(payload, {
+      reasoning_effort: level,
+      budget: 9000,
+      reasoning_budget_message: "Answer now.",
+    });
+  }
+
+  const offPayload: Record<string, unknown> = {
+    budget: 9000,
+    reasoning_budget_message: "stale",
+    enable_thinking: true,
+  };
+  applyReasoningRules(
+    offPayload,
+    [{ ...customRule, budgetMode: "off" }],
+    "p",
+    "m",
+    "high",
+  );
+  assert.deepEqual(offPayload, { enable_thinking: true });
+});
+
+test("Pi off removes the budget and message for auto and custom modes", () => {
+  for (const rule of [
+    {
+      provider: "p",
+      model: "m",
+      parameter: "budget",
+      budgets: { low: 4096 },
+      budgetMode: "auto" as const,
+    },
+    {
+      provider: "p",
+      model: "m",
+      parameter: "budget",
+      budgets: {},
+      budgetMode: "custom" as const,
+      customBudget: 8192,
+    },
+  ]) {
+    const payload: Record<string, unknown> = {
+      budget: 123,
+      reasoning_budget_message: "stale",
+      preserve_thinking: true,
+    };
+    applyReasoningRules(payload, [rule], "p", "m", "off");
+    assert.deepEqual(payload, { preserve_thinking: true });
+  }
+});
+
+test("updating a rule preserves mappings, custom budget, and unrelated rules", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-reasoning-budget-selector-"));
+  const path = join(directory, "nested", "config.json");
+  try {
+    await updateReasoningRule(
+      path,
+      { provider: "p", model: "m", parameter: DEFAULT_PARAMETER },
+      { budgetMode: "custom", customBudget: 9000, reasoningBudgetMessage: "Answer." },
+    );
+    const created = await readConfigFile(path);
+    assert.equal(created?.rules[0]?.customBudget, 9000);
+
+    const unrelated = {
+      provider: "other",
+      model: "other-model",
+      parameter: "tokens",
+      budgets: { low: 100 },
+    };
+    await writeFile(
+      path,
+      JSON.stringify({
+        rules: [
+          {
+            provider: "p",
+            model: "m",
+            budgets: { low: 4096 },
+            budgetMode: "custom",
+            customBudget: 9000,
+            reasoningBudgetMessage: "Answer.",
+          },
+          unrelated,
+        ],
+      }),
+    );
+    await updateReasoningRule(
+      path,
+      { provider: "p", model: "m", parameter: DEFAULT_PARAMETER },
+      { budgetMode: "off", reasoningBudgetMessage: null },
+    );
+
+    const raw = JSON.parse(await readFile(path, "utf8")) as {
+      rules: Array<Record<string, unknown>>;
+    };
+    assert.deepEqual(raw.rules[0]?.budgets, { low: 4096 });
+    assert.equal(raw.rules[0]?.customBudget, 9000);
+    assert.equal(raw.rules[0]?.budgetMode, "off");
+    assert.equal(Object.hasOwn(raw.rules[0] ?? {}, "reasoningBudgetMessage"), false);
+    assert.deepEqual(raw.rules[1], unrelated);
+    assert.equal((await readFile(path, "utf8")).endsWith("\n"), true);
+    assert.match(await readFile(path, "utf8"), /\n  "rules": \[/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("effective config source prefers an existing project file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-reasoning-budget-selector-"));
+  const globalPath = join(directory, "global.json");
+  const projectPath = join(directory, "project.json");
+  try {
+    assert.deepEqual(await resolveEffectiveConfigSource(globalPath, projectPath), {
+      path: globalPath,
+      scope: "global",
+    });
+    await writeFile(projectPath, "{\"rules\":[]}");
+    assert.deepEqual(await resolveEffectiveConfigSource(globalPath, projectPath), {
+      path: projectPath,
+      scope: "project",
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

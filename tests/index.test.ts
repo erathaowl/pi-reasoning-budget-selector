@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_PARAMETER, type ReasoningRule, type ThinkingLevel } from "../extensions/config.ts";
+import {
+  DEFAULT_PARAMETER,
+  DEFAULT_REASONING_BUDGET_MESSAGE,
+  type ReasoningRule,
+  type ThinkingLevel,
+} from "../extensions/config.ts";
 import { handleBeforeProviderRequest } from "../extensions/index.ts";
 
 interface Notification {
@@ -88,6 +93,7 @@ test("a valid comfortable assignment is injected silently", () => {
   handleBeforeProviderRequest({ payload }, runtime.ctx, [rule()], new Set());
 
   assert.equal(payload.thinking_budget_tokens, 4096);
+  assert.equal(payload.reasoning_budget_message, DEFAULT_REASONING_BUDGET_MESSAGE);
   assert.equal(runtime.abortCount(), 0);
   assert.deepEqual(runtime.notifications, []);
 });
@@ -123,4 +129,89 @@ test("an unmapped level leaves the payload untouched without validation", () => 
   assert.deepEqual(payload, { thinking_budget_tokens: 1234 });
   assert.equal(runtime.abortCount(), 0);
   assert.deepEqual(runtime.notifications, []);
+});
+
+test("a custom message overrides the default", () => {
+  const payload: Record<string, unknown> = {};
+  const runtime = createContext();
+  handleBeforeProviderRequest(
+    { payload },
+    runtime.ctx,
+    [{ ...rule(), reasoningBudgetMessage: "Enough thinking." }],
+    new Set(),
+  );
+  assert.equal(payload.reasoning_budget_message, "Enough thinking.");
+});
+
+test("custom mode uses one validated budget for every non-off level", () => {
+  const customRule: ReasoningRule = {
+    ...rule(),
+    budgets: { low: 1, high: 2 },
+    budgetMode: "custom",
+    customBudget: 10000,
+  };
+  for (const level of ["minimal", "medium", "max"] as const) {
+    const payload: Record<string, unknown> = {};
+    const runtime = createContext({ level });
+    handleBeforeProviderRequest({ payload }, runtime.ctx, [customRule], new Set());
+    assert.equal(payload.thinking_budget_tokens, 10000);
+    assert.equal(payload.reasoning_budget_message, DEFAULT_REASONING_BUDGET_MESSAGE);
+    assert.equal(runtime.abortCount(), 0);
+  }
+});
+
+test("custom mode uses model-limit errors and headroom warnings", () => {
+  const customRule: ReasoningRule = {
+    ...rule(),
+    budgets: {},
+    budgetMode: "custom",
+    customBudget: 14000,
+  };
+  const warningRuntime = createContext({ level: "high", maxTokens: 16384 });
+  handleBeforeProviderRequest({ payload: {} }, warningRuntime.ctx, [customRule], new Set());
+  assert.match(warningRuntime.notifications[0]?.message ?? "", /2384 output tokens/);
+
+  const invalidRuntime = createContext({ level: "max", maxTokens: 14000 });
+  const payload: Record<string, unknown> = {};
+  handleBeforeProviderRequest({ payload }, invalidRuntime.ctx, [customRule], new Set());
+  assert.equal(invalidRuntime.abortCount(), 1);
+  assert.deepEqual(payload, {});
+});
+
+test("configured off mode removes the budget and message without changing Pi controls", () => {
+  const payload: Record<string, unknown> = {
+    thinking_budget_tokens: 4096,
+    reasoning_budget_message: "stale",
+    reasoning_effort: "high",
+    enable_thinking: true,
+    chat_template_kwargs: { preserve_thinking: true },
+  };
+  const runtime = createContext({ level: "high", contextWindow: 0, maxTokens: 0 });
+  handleBeforeProviderRequest(
+    { payload },
+    runtime.ctx,
+    [{ ...rule(), budgetMode: "off" }],
+    new Set(),
+  );
+  assert.deepEqual(payload, {
+    reasoning_effort: "high",
+    enable_thinking: true,
+    chat_template_kwargs: { preserve_thinking: true },
+  });
+  assert.equal(runtime.abortCount(), 0);
+});
+
+test("Pi off removes the message for auto and custom rules", () => {
+  for (const configuredRule of [
+    rule(),
+    { ...rule(), budgetMode: "custom" as const, customBudget: 8192 },
+  ]) {
+    const payload: Record<string, unknown> = {
+      thinking_budget_tokens: 1,
+      reasoning_budget_message: "stale",
+    };
+    const runtime = createContext({ level: "off", contextWindow: 0, maxTokens: 0 });
+    handleBeforeProviderRequest({ payload }, runtime.ctx, [configuredRule], new Set());
+    assert.deepEqual(payload, {});
+  }
 });

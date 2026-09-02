@@ -4,6 +4,7 @@
       "provider": "llama-local",
       "model": "qwen3.8-27b",
       "parameter": "thinking_budget_tokens",
+      "budgetMode": "auto",
       "budgets": {
         "low": 4096,
         "medium": 8192,
