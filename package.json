@@ -1,6 +1,6 @@
 {
   "name": "pi-reasoning-by-thinking",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Map Pi thinking levels to per-model numeric reasoning budgets",
   "type": "module",
   "license": "MIT",
