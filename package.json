@@ -1,12 +1,11 @@
-{
-  "name": "pi-reasoning-by-thinking",
-  "version": "0.2.0",
+  "name": "pi-reasoning-budget-selector",
+  "version": "0.1.0",
   "description": "Map Pi thinking levels to per-model numeric reasoning budgets",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/erathaowl/pi-reasoning-by-thinking.git"
+    "url": "https://github.com/erathaowl/pi-reasoning-budget-selector.git"
   },
   "keywords": [
     "pi-package",
